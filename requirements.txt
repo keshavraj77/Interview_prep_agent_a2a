@@ -9,6 +9,7 @@ langchain-community>=0.3.0
 uvicorn>=0.34.2
 httpx>=0.28.1
 starlette>=0.47.2
+sse-starlette>=2.0.0
 fastapi>=0.116.1
 
 # Data handling and validation
