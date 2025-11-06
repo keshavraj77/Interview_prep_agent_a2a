@@ -218,7 +218,7 @@ class InterviewPrepAgentExecutor(AgentExecutor):
 
             # Send "submitted" status
             submitted_message = new_agent_text_message(
-                "Your interview preparation request has been submitted and is being processed.",
+                "Great! I'm working on your personalized interview prep plan. This will take about 1-2 minutes.",
                 task.context_id,
                 task.id,
             )
@@ -226,7 +226,7 @@ class InterviewPrepAgentExecutor(AgentExecutor):
 
             # Send "working" status
             working_message = new_agent_text_message(
-                "🔍 Researching the latest interview resources and trends for your domains...",
+                "..Searching for the best interview resources and study materials for you...",
                 task.context_id,
                 task.id,
             )
