@@ -205,8 +205,9 @@ For processing status, indicate if web search is required and provide search que
     async def _get_conversation_state(self, context_id: str) -> ConversationState:
         """Retrieve or create conversation state for the given context."""
         if context_id in self.conversation_states:
-            logger.info(f"Retrieved existing state for {context_id}: phase={self.conversation_states[context_id].phase}")
-            return self.conversation_states[context_id]
+            existing_state = self.conversation_states[context_id]
+            logger.info(f"Retrieved existing state for {context_id}: phase={existing_state.phase}, domains={existing_state.user_inputs.domains}")
+            return existing_state
         else:
             logger.info(f"Creating new state for {context_id}")
             new_state = ConversationState()
@@ -239,13 +240,13 @@ For processing status, indicate if web search is required and provide search que
 
 First, which interview domains would you like to focus on? You can choose multiple:
 
-🔹 **Algorithms** - Data structures, algorithms, coding problems
-🔹 **System Design** - Scalable system architecture, distributed systems
-🔹 **Databases** - SQL, NoSQL, database design
-🔹 **Machine Learning** - ML algorithms, data science concepts
-🔹 **Behavioral** - Soft skills, situational questions
-🔹 **Frontend** - JavaScript, React, UI/UX
-🔹 **Backend** - APIs, microservices, server architecture
+- **Algorithms** - Data structures, algorithms, coding problems
+- **System Design** - Scalable system architecture, distributed systems
+- **Databases** - SQL, NoSQL, database design
+- **Machine Learning** - ML algorithms, data science concepts
+- **Behavioral** - Soft skills, situational questions
+- **Frontend** - JavaScript, React, UI/UX
+- **Backend** - APIs, microservices, server architecture
 
 Please tell me which domains interest you, or type "all" if you want comprehensive preparation.""",
                 'phase': ConversationPhase.DOMAIN_SELECTION
@@ -275,12 +276,15 @@ Would you like to start preparing for interviews? Just say "I want to prepare fo
     ) -> AsyncIterableType[Dict[str, Any]]:
         """Handle domain selection phase."""
         logger.info("Handling domain selection phase")
+        logger.info(f"User query: {query}")
 
         # Parse domains from user input
         domains = self._parse_domains(query)
+        logger.info(f"Parsed domains: {domains}")
 
         if domains:
             state.user_inputs.domains = domains
+            logger.info(f"Set state.user_inputs.domains to: {state.user_inputs.domains}")
             state.advance_phase(ConversationPhase.LEVEL_ASSESSMENT)
             state.add_message("agent", f"Selected domains: {', '.join(domains)}")
 
@@ -293,9 +297,9 @@ Would you like to start preparing for interviews? Just say "I want to prepare fo
 
 Now, what's your current skill level in these areas?
 
-🟢 **Beginner** - New to the field, learning fundamentals
-🟡 **Intermediate** - Some experience, comfortable with basics
-🔴 **Advanced** - Experienced, looking to master complex topics
+- **Beginner** - New to the field, learning fundamentals
+- **Intermediate** - Some experience, comfortable with basics
+- **Advanced** - Experienced, looking to master complex topics
 
 Please tell me your skill level.""",
                 'phase': ConversationPhase.LEVEL_ASSESSMENT
@@ -320,26 +324,44 @@ You can say something like "I want to focus on algorithms and system design" or 
 
     def _parse_domains(self, query: str) -> List[str]:
         """Parse interview domains from user input."""
-        query_lower = query.lower()
+        # Extract only the last user message (split by newlines and take the last non-empty line)
+        lines = [line.strip() for line in query.strip().split('\n') if line.strip()]
+        user_input = lines[-1] if lines else query
+
+        query_lower = user_input.lower()
         domains = []
 
+        logger.info(f"_parse_domains called with full query length: {len(query)} chars")
+        logger.info(f"Extracted user input: '{user_input}'")
+        logger.info(f"query_lower: '{query_lower}'")
+
+        # Check for "all" as a standalone word (not part of other text)
+        import re
+        if re.search(r'\ball\b', query_lower) or 'everything' in query_lower:
+            logger.info("Matched 'all' condition, returning all domains")
+            return ['algorithms', 'system_design', 'databases', 'machine_learning', 'behavioral', 'frontend', 'backend']
+
+        # Domain keywords with priorities (check longer/more specific phrases first)
         domain_keywords = {
-            'algorithms': ['algorithm', 'algo', 'coding', 'leetcode', 'data structure'],
-            'system_design': ['system', 'design', 'architecture', 'scalability'],
-            'databases': ['database', 'db', 'sql', 'nosql'],
-            'machine_learning': ['machine learning', 'ml', 'ai', 'data science'],
-            'behavioral': ['behavioral', 'soft skill', 'leadership'],
-            'frontend': ['frontend', 'front-end', 'react', 'javascript', 'ui'],
-            'backend': ['backend', 'back-end', 'api', 'microservice']
+            'algorithms': ['algorithm', 'algo', 'dsa', 'leetcode'],
+            'system_design': ['system design', 'systems design', 'system architecture', 'distributed system'],
+            'databases': ['database', 'db', 'sql'],
+            'machine_learning': ['machine learning', 'ml', 'data science'],
+            'behavioral': ['behavioral', 'behavior', 'soft skill'],
+            'frontend': ['frontend', 'front-end', 'react', 'javascript', 'ui/ux'],
+            'backend': ['backend', 'back-end', 'server', 'microservice']
         }
 
-        if 'all' in query_lower:
-            domains = list(domain_keywords.keys())
-        else:
-            for domain, keywords in domain_keywords.items():
-                if any(keyword in query_lower for keyword in keywords):
-                    domains.append(domain)
+        # Check each domain
+        for domain, keywords in domain_keywords.items():
+            for keyword in keywords:
+                if keyword in query_lower:
+                    logger.info(f"Matched domain '{domain}' with keyword '{keyword}'")
+                    if domain not in domains:
+                        domains.append(domain)
+                    break  # Found a match, move to next domain
 
+        logger.info(f"Returning domains: {domains}")
         return domains
 
     async def _handle_level_assessment(
@@ -365,10 +387,10 @@ You can say something like "I want to focus on algorithms and system design" or 
 
 Now, what's your learning preference?
 
-📚 **Theory-Heavy** - Focus on concepts, principles, and understanding
-💻 **Coding-Heavy** - Emphasis on practice problems and hands-on coding
-⚖️ **Balanced** - Mix of theory and practical exercises
-🏗️ **Project-Based** - Learn through building real projects
+- **Theory-Heavy** - Focus on concepts, principles, and understanding
+- **Coding-Heavy** - Emphasis on practice problems and hands-on coding
+- **Balanced** - Mix of theory and practical exercises
+- **Project-Based** - Learn through building real projects
 
 What approach works best for you?""",
                 'phase': ConversationPhase.PREFERENCE_GATHERING
@@ -389,7 +411,10 @@ Just say "beginner", "intermediate", or "advanced".""",
 
     def _parse_skill_level(self, query: str) -> Optional[str]:
         """Parse skill level from user input."""
-        query_lower = query.lower()
+        # Extract only the last user message
+        lines = [line.strip() for line in query.strip().split('\n') if line.strip()]
+        user_input = lines[-1] if lines else query
+        query_lower = user_input.lower()
 
         if any(word in query_lower for word in ['beginner', 'new', 'start']):
             return 'beginner'
@@ -433,10 +458,10 @@ Just say "beginner", "intermediate", or "advanced".""",
 **Learning Style:** {preference.replace('_', ' ').title()}
 
 I'm ready to create your personalized interview preparation plan. This will involve:
-- 🔍 Researching latest interview trends and resources
-- 📋 Creating a customized study schedule
-- 📚 Finding domain-specific practice materials
-- 🗺️ Generating a comprehensive roadmap
+- Researching latest interview trends and resources
+- Creating a customized study schedule
+- Finding domain-specific practice materials
+- Generating a comprehensive roadmap
 
 **This process takes 2-3 minutes. Would you like me to start creating your plan?**
 
@@ -468,7 +493,10 @@ Just say something like "I prefer coding-heavy" or "balanced approach".""",
 
     def _parse_preference(self, query: str) -> Optional[str]:
         """Parse learning preference from user input."""
-        query_lower = query.lower()
+        # Extract only the last user message
+        lines = [line.strip() for line in query.strip().split('\n') if line.strip()]
+        user_input = lines[-1] if lines else query
+        query_lower = user_input.lower()
 
         if any(word in query_lower for word in ['theory', 'concept', 'understanding']):
             return 'theory_heavy'
@@ -541,7 +569,7 @@ Just say something like "I prefer coding-heavy" or "balanced approach".""",
             yield {
                 'is_task_complete': True,
                 'require_user_input': False,
-                'content': """🎉 Excellent! Your interview preparation plan is complete.
+                'content': """Excellent! Your interview preparation plan is complete.
 
 **Next Steps:**
 1. Save your preparation plan for reference
@@ -549,7 +577,7 @@ Just say something like "I prefer coding-heavy" or "balanced approach".""",
 3. Track your progress regularly
 4. Come back anytime for plan updates
 
-Good luck with your interview preparation! 🚀""",
+Good luck with your interview preparation!""",
                 'phase': ConversationPhase.COMPLETED
             }
 
@@ -562,11 +590,11 @@ Good luck with your interview preparation! 🚀""",
                 'content': """I'd be happy to refine your preparation plan!
 
 What would you like me to adjust? For example:
-- 🎯 Add more focus on specific domains
-- ⏰ Change the timeline or intensity
-- 🏢 Include specific companies or roles
-- 📚 Modify learning resources or style
-- 🔧 Any other specific requirements
+- Add more focus on specific domains
+- Change the timeline or intensity
+- Include specific companies or roles
+- Modify learning resources or style
+- Any other specific requirements
 
 Please describe what you'd like me to change.""",
                 'phase': ConversationPhase.REFINEMENT_INPUT
