@@ -181,7 +181,7 @@ class InterviewPrepPushNotificationHandler:
             logger.info("Starting async interview preparation processing")
 
             # Track progress through the agent's response generator
-            async for response in agent_response_generator(query, context_id):
+            async for response in agent_response_generator(query, context_id, request_metadata):
                 progress_content = response.get('content', '')
                 is_complete = response.get('is_task_complete', False)
                 require_input = response.get('require_user_input', False)
@@ -497,12 +497,16 @@ class InterviewPrepPushNotificationHandler:
 
             # Print the EXACT JSON-RPC body being sent (for debugging)
             import json
-            exact_json_body = json.dumps(payload, indent=2, default=str)
+            exact_json_body = json.dumps(payload, indent=2, default=str, ensure_ascii=False)
             logger.debug(f"EXACT JSON-RPC CALLBACK BODY:\n{exact_json_body}")
+
+            # Ensure UTF-8 encoding by manually serializing with ensure_ascii=False
+            json_data = json.dumps(payload, default=str, ensure_ascii=False)
+            headers["Content-Type"] = "application/json; charset=utf-8"
 
             response = await self.client.post(
                 callback_url,
-                json=payload,
+                content=json_data.encode('utf-8'),
                 headers=headers,
                 timeout=self.settings.callback_timeout
             )
