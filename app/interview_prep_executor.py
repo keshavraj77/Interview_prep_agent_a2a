@@ -281,10 +281,15 @@ class InterviewPrepAgentExecutor(AgentExecutor):
             logger.error(f"Error checking async processing condition: {e}")
             return False
 
-    async def _async_research_and_generate(self, query: str, context_id: str):
+    async def _async_research_and_generate(self, query: str, context_id: str, request_metadata: Dict[str, Any] = None):
         """
         Async generator for research and plan generation with progress updates.
         This mimics the agent.stream interface but performs long-running research.
+
+        Args:
+            query: User query
+            context_id: Conversation context ID
+            request_metadata: Optional request metadata containing user info (wxo_email_id, etc.)
         """
         try:
             logger.info(f"Starting async research and generation for context: {context_id}")
@@ -343,6 +348,17 @@ class InterviewPrepAgentExecutor(AgentExecutor):
             conversation_state.advance_phase(ConversationPhase.PLAN_DELIVERED)
             await self.agent._save_conversation_state(context_id, conversation_state)
 
+            # Extract email ID from metadata
+            email_id = None
+            if request_metadata:
+                email_id = request_metadata.get('wxo_email_id')
+                logger.info(f"Extracted email ID from metadata: {email_id}")
+
+            # Build email notification message
+            email_message = ""
+            if email_id:
+                email_message = f"\n\n📧 **A copy of this plan has been sent to: {email_id}**\n"
+
             # Final response with complete plan and satisfaction check
             yield {
                 'is_task_complete': False,  # Not fully complete yet - need satisfaction check
@@ -352,7 +368,7 @@ class InterviewPrepAgentExecutor(AgentExecutor):
 {plan_content}
 
 ---
-
+{email_message}
 **Are you satisfied with this preparation plan, or would you like me to make any adjustments?**
 
 You can say:
