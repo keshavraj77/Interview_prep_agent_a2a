@@ -248,7 +248,19 @@ Provide exactly {max_results} recommendations."""
             # Parse AI response into structured recommendations
             recommendations = []
             content = response.content
-            
+
+            # Handle case where content might be a list (Gemini format)
+            if isinstance(content, list):
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and 'text' in item:
+                        text_parts.append(item['text'])
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                    else:
+                        text_parts.append(str(item))
+                content = ''.join(text_parts)
+
             # Simple parsing - in production, use structured output
             sections = content.split('---')
             
@@ -384,9 +396,24 @@ Make it personal, specific, and actionable."""
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt)
             ])
-            
-            return response.content
-            
+
+            content = response.content
+
+            # Handle case where content might be a list (Gemini format)
+            if isinstance(content, list):
+                # Extract text from Gemini's response format
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and 'text' in item:
+                        text_parts.append(item['text'])
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                    else:
+                        text_parts.append(str(item))
+                content = ''.join(text_parts)
+
+            return content
+
         except Exception as e:
             logger.error(f"Error synthesizing plan: {e}")
             return "Error generating personalized plan. Please try again."

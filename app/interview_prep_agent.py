@@ -718,7 +718,7 @@ You can say:
                 'skill_level': user_inputs.skill_level or 'intermediate',
                 'preference': user_inputs.preference or 'balanced',
                 'timeline': '8-12 weeks',
-                'companies': user_inputs.companies or []
+                'companies': user_inputs.specific_companies or []
             }
             
             for domain in user_inputs.domains:
@@ -763,7 +763,7 @@ You can say:
                     'skill_level': user_inputs.skill_level or 'intermediate',
                     'preference': user_inputs.preference or 'balanced',
                     'timeline': '8-12',
-                    'companies': user_inputs.companies or 'General tech companies'
+                    'companies': user_inputs.specific_companies or ['General tech companies']
                 },
                 research_data=research_data,
                 ranked_resources=ranked_resources

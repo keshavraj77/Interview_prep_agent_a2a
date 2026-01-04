@@ -1,15 +1,25 @@
 import os
 import logging
 from typing import List, Dict, Any, Optional
-from langchain_core.tools import tool
+# Removed @tool decorators - functions are called directly, not as LangChain tools
 from duckduckgo_search import DDGS
 import asyncio
 import httpx
 
 logger = logging.getLogger(__name__)
 
+# Domains to exclude (non-English sites)
+EXCLUDED_DOMAINS = [
+    'zhihu.com', 'csdn.net', 'baidu.com', 'qq.com', 'weixin.com',
+    'bilibili.com', 'douban.com', 'jianshu.com', 'cnblogs.com',
+    'sohu.com', '163.com', 'sina.com', 'toutiao.com', 'weibo.com'
+]
 
-@tool
+def is_english_url(url: str) -> bool:
+    """Check if URL is likely from an English site."""
+    return not any(excluded in url.lower() for excluded in EXCLUDED_DOMAINS)
+
+
 async def search_interview_resources(
     query: str,
     domain: str = "general",
@@ -48,18 +58,24 @@ async def search_interview_resources(
         try:
             results = ddgs.text(
                 keywords=enhanced_query,
-                max_results=max_results,
+                max_results=max_results * 2,  # Fetch more to filter
                 region='us-en',
                 safesearch='moderate'
             )
 
             for result in results:
+                url = result.get('href', '')
+                # Filter out non-English domains
+                if not is_english_url(url):
+                    continue
                 search_results.append({
                     'title': result.get('title', ''),
                     'snippet': result.get('body', ''),
-                    'url': result.get('href', ''),
+                    'url': url,
                     'domain': domain
                 })
+                if len(search_results) >= max_results:
+                    break
 
         except Exception as search_error:
             logger.error(f"DuckDuckGo search failed: {search_error}")
@@ -86,7 +102,6 @@ async def search_interview_resources(
         }
 
 
-@tool
 async def search_company_interview_info(
     company_name: str,
     role_type: str = "software engineer"
@@ -120,19 +135,24 @@ async def search_company_interview_info(
         try:
             results = ddgs.text(
                 keywords=query,
-                max_results=5,
+                max_results=10,  # Fetch more to filter
                 region='us-en',
                 safesearch='moderate'
             )
 
             for result in results:
+                url = result.get('href', '')
+                if not is_english_url(url):
+                    continue
                 search_results.append({
                     'title': result.get('title', ''),
                     'snippet': result.get('body', ''),
-                    'url': result.get('href', ''),
+                    'url': url,
                     'company': company_name,
                     'role_type': role_type
                 })
+                if len(search_results) >= 5:
+                    break
 
         except Exception as search_error:
             logger.error(f"Company search failed: {search_error}")
@@ -160,7 +180,6 @@ async def search_company_interview_info(
         }
 
 
-@tool
 async def search_learning_resources(
     topic: str,
     skill_level: str = "intermediate",
@@ -203,20 +222,25 @@ async def search_learning_resources(
         try:
             results = ddgs.text(
                 keywords=query,
-                max_results=6,
+                max_results=12,  # Fetch more to filter
                 region='us-en',
                 safesearch='moderate'
             )
 
             for result in results:
+                url = result.get('href', '')
+                if not is_english_url(url):
+                    continue
                 search_results.append({
                     'title': result.get('title', ''),
                     'snippet': result.get('body', ''),
-                    'url': result.get('href', ''),
+                    'url': url,
                     'topic': topic,
                     'skill_level': skill_level,
                     'resource_type': resource_type
                 })
+                if len(search_results) >= 6:
+                    break
 
         except Exception as search_error:
             logger.error(f"Learning resources search failed: {search_error}")
@@ -245,7 +269,6 @@ async def search_learning_resources(
         }
 
 
-@tool
 async def search_leetcode_problems(
     topic: str,
     difficulty: str = "medium",
@@ -335,7 +358,6 @@ async def search_leetcode_problems(
         }
 
 
-@tool
 async def search_youtube_channels(
     topic: str,
     content_type: str = "tutorial",
@@ -420,7 +442,6 @@ async def search_youtube_channels(
         }
 
 
-@tool
 async def search_current_interview_guides(
     domain: str,
     year: str = "2024",
@@ -465,15 +486,19 @@ async def search_current_interview_guides(
         try:
             results = ddgs.text(
                 keywords=query,
-                max_results=8,
+                max_results=16,  # Fetch more to filter
                 region='us-en',
                 safesearch='moderate'
             )
 
             for result in results:
+                url = result.get('href', '')
+                # Filter out non-English domains
+                if not is_english_url(url):
+                    continue
+
                 # Prioritize results from known tech/education sites
-                url = result.get('href', '').lower()
-                is_quality_site = any(site in url for site in [
+                is_quality_site = any(site in url.lower() for site in [
                     'medium.com', 'dev.to', 'hackernoon.com', 'freecodecamp.org',
                     'towards', 'github.com', 'interviewbit.com', 'geeksforgeeks.org'
                 ])
@@ -481,12 +506,14 @@ async def search_current_interview_guides(
                 search_results.append({
                     'title': result.get('title', ''),
                     'snippet': result.get('body', ''),
-                    'url': result.get('href', ''),
+                    'url': url,
                     'domain': domain,
                     'year': year,
                     'guide_type': guide_type,
                     'is_quality_site': is_quality_site
                 })
+                if len(search_results) >= 8:
+                    break
 
         except Exception as search_error:
             logger.error(f"Current guides search failed: {search_error}")

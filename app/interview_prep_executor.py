@@ -93,6 +93,15 @@ class InterviewPrepAgentExecutor(AgentExecutor):
                 )
                 return
 
+            if should_start_async and not push_notification_config:
+                logger.info(f"Starting async processing WITHOUT push notifications for task {task.id}")
+
+                # Handle with polling fallback (no push notifications configured)
+                await self._handle_with_polling_fallback(
+                    context, event_queue, task, query
+                )
+                return
+
             # Standard multi-turn processing (for input gathering)
             await self._handle_standard_processing(context, event_queue, task, query)
 
@@ -252,6 +261,121 @@ class InterviewPrepAgentExecutor(AgentExecutor):
         else:
             # Handle as regular multi-turn conversation
             await self._handle_standard_processing(context, event_queue, task, query)
+
+    async def _handle_with_polling_fallback(
+        self,
+        context: RequestContext,
+        event_queue: EventQueue,
+        task: Task,
+        query: str
+    ) -> None:
+        """
+        Handle async processing when push notifications are not configured.
+        Starts background processing and returns task ID for polling.
+        """
+        updater = TaskUpdater(event_queue, task.id, task.context_id)
+
+        # Send "submitted" status with polling instructions
+        polling_message = f"""Your interview preparation request has been submitted for processing.
+
+**Task ID:** `{task.id}`
+
+Since push notifications are not configured, you can retrieve your results by polling:
+
+**Endpoint:** `GET /tasks/{task.id}`
+
+**Expected processing time:** 2-3 minutes
+
+The task status will transition through:
+- `submitted` - Request received
+- `working` - Processing in progress
+- `completed` - Results ready
+
+Please check back in 2-3 minutes to retrieve your personalized interview preparation plan.
+
+Alternatively, you can enable push notifications in your request configuration to receive automatic updates."""
+
+        logger.info(f"Sending polling fallback message for task {task.id}")
+
+        submitted_message = new_agent_text_message(
+            polling_message,
+            task.context_id,
+            task.id,
+        )
+        await updater.update_status(TaskState.submitted, submitted_message, final=True)
+
+        logger.info(f"Polling message sent, starting background processing for task {task.id}")
+
+        # Start background processing
+        asyncio.create_task(
+            self._background_process_and_update(task, query, context.metadata)
+        )
+
+    async def _background_process_and_update(
+        self,
+        task: Task,
+        query: str,
+        request_metadata: dict = None
+    ) -> None:
+        """
+        Background task that processes the request and updates task store.
+        """
+        try:
+            logger.info(f"Starting background processing for task {task.id}")
+
+            # Get conversation state
+            conversation_state = await self.agent._get_conversation_state(task.context_id)
+
+            # Perform research
+            research_data = {}
+            if conversation_state.user_inputs.domains:
+                research_data = await self.search_manager.comprehensive_research(
+                    domains=conversation_state.user_inputs.domains,
+                    skill_level=conversation_state.user_inputs.skill_level or 'intermediate',
+                    companies=conversation_state.user_inputs.specific_companies
+                )
+
+            # Generate the preparation plan
+            if research_data.get('success'):
+                plan_content = await self.agent.create_preparation_plan(
+                    conversation_state.user_inputs,
+                    research_data.get('research_data', {})
+                )
+            else:
+                plan_content = await self._generate_fallback_plan(conversation_state.user_inputs)
+
+            # Update conversation state
+            conversation_state.plan_content = plan_content
+            conversation_state.plan_generated = True
+            conversation_state.advance_phase(ConversationPhase.PLAN_DELIVERED)
+            await self.agent._save_conversation_state(task.context_id, conversation_state)
+
+            # Update task with completed status and result
+            # Note: The task store will be updated via the A2A framework
+            # The next GET request for this task will return the completed result
+            task.status.state = TaskState.completed
+            task.status.message = new_agent_text_message(
+                f"""🎉 **Your Interview Preparation Plan is Ready!**
+
+{plan_content}
+
+---
+
+**Are you satisfied with this preparation plan, or would you like me to make any adjustments?**""",
+                task.context_id,
+                task.id,
+            )
+
+            logger.info(f"Background processing completed for task {task.id}")
+
+        except Exception as e:
+            logger.error(f"Error in background processing for task {task.id}: {e}")
+            task.status.state = TaskState.failed
+            task.status.message = new_agent_text_message(
+                f"An error occurred while processing your request: {str(e)}",
+                task.context_id,
+                task.id,
+            )
 
     async def _should_start_async_processing(self, context_id: str, query: str) -> bool:
         """
