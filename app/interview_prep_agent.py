@@ -34,6 +34,7 @@ from .web_search_tools import (
     search_current_interview_guides,
     WebSearchManager
 )
+from .ai_resource_analyzer import AIResourceAnalyzer, UserIntent, ResourceRecommendation
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ For processing status, indicate if web search is required and provide search que
         model_source = os.getenv('MODEL_SOURCE', 'google')
         if model_source == 'google':
             self.model = ChatGoogleGenerativeAI(
-                model='gemini-2.0-flash',
+                model='gemini-3-flash-preview',
                 temperature=0.3
             )
         else:
@@ -104,6 +105,9 @@ For processing status, indicate if web search is required and provide search que
 
         # Initialize web search manager
         self.search_manager = WebSearchManager()
+        
+        # Initialize AI resource analyzer
+        self.ai_analyzer = AIResourceAnalyzer()
 
         # Setup tools
         self.tools = [
@@ -278,8 +282,8 @@ Would you like to start preparing for interviews? Just say "I want to prepare fo
         logger.info("Handling domain selection phase")
         logger.info(f"User query: {query}")
 
-        # Parse domains from user input
-        domains = self._parse_domains(query)
+        # Parse domains from user input using AI
+        domains = await self._parse_domains_with_ai(query)
         logger.info(f"Parsed domains: {domains}")
 
         if domains:
@@ -322,26 +326,28 @@ You can say something like "I want to focus on algorithms and system design" or 
                 'phase': ConversationPhase.DOMAIN_SELECTION
             }
 
-    def _parse_domains(self, query: str) -> List[str]:
-        """Parse interview domains from user input."""
-        # Extract only the last user message (split by newlines and take the last non-empty line)
+    async def _parse_domains_with_ai(self, query: str) -> List[str]:
+        """Parse interview domains using AI understanding."""
+        try:
+            intent = await self.ai_analyzer.parse_user_intent(query, context="domain_selection")
+            logger.info(f"AI parsed domains: {intent.domains} (confidence: {intent.confidence})")
+            logger.info(f"AI reasoning: {intent.reasoning}")
+            return intent.domains
+        except Exception as e:
+            logger.error(f"AI parsing failed, falling back to keyword matching: {e}")
+            return self._parse_domains_fallback(query)
+    
+    def _parse_domains_fallback(self, query: str) -> List[str]:
+        """Fallback keyword-based domain parsing."""
         lines = [line.strip() for line in query.strip().split('\n') if line.strip()]
         user_input = lines[-1] if lines else query
-
         query_lower = user_input.lower()
         domains = []
 
-        logger.info(f"_parse_domains called with full query length: {len(query)} chars")
-        logger.info(f"Extracted user input: '{user_input}'")
-        logger.info(f"query_lower: '{query_lower}'")
-
-        # Check for "all" as a standalone word (not part of other text)
         import re
         if re.search(r'\ball\b', query_lower) or 'everything' in query_lower:
-            logger.info("Matched 'all' condition, returning all domains")
             return ['algorithms', 'system_design', 'databases', 'machine_learning', 'behavioral', 'frontend', 'backend']
 
-        # Domain keywords with priorities (check longer/more specific phrases first)
         domain_keywords = {
             'algorithms': ['algorithm', 'algo', 'dsa', 'leetcode'],
             'system_design': ['system design', 'systems design', 'system architecture', 'distributed system'],
@@ -373,7 +379,7 @@ You can say something like "I want to focus on algorithms and system design" or 
         """Handle skill level assessment phase."""
         logger.info("Handling level assessment phase")
 
-        level = self._parse_skill_level(query)
+        level = await self._parse_skill_level_with_ai(query)
 
         if level:
             state.user_inputs.skill_level = level
@@ -434,7 +440,7 @@ Just say "beginner", "intermediate", or "advanced".""",
         """Handle learning preference gathering phase."""
         logger.info("Handling preference gathering phase")
 
-        preference = self._parse_preference(query)
+        preference = await self._parse_preference_with_ai(query)
 
         if preference:
             state.user_inputs.preference = preference
@@ -491,9 +497,18 @@ Just say something like "I prefer coding-heavy" or "balanced approach".""",
                 'phase': ConversationPhase.PREFERENCE_GATHERING
             }
 
-    def _parse_preference(self, query: str) -> Optional[str]:
-        """Parse learning preference from user input."""
-        # Extract only the last user message
+    async def _parse_preference_with_ai(self, query: str) -> Optional[str]:
+        """Parse learning preference using AI understanding."""
+        try:
+            intent = await self.ai_analyzer.parse_user_intent(query, context="preference")
+            logger.info(f"AI parsed preference: {intent.learning_preference}")
+            return intent.learning_preference
+        except Exception as e:
+            logger.error(f"AI parsing failed, falling back: {e}")
+            return self._parse_preference_fallback(query)
+    
+    def _parse_preference_fallback(self, query: str) -> Optional[str]:
+        """Fallback keyword-based preference parsing."""
         lines = [line.strip() for line in query.strip().split('\n') if line.strip()]
         user_input = lines[-1] if lines else query
         query_lower = user_input.lower()
@@ -506,7 +521,30 @@ Just say something like "I prefer coding-heavy" or "balanced approach".""",
             return 'balanced'
         elif any(word in query_lower for word in ['project', 'build', 'real']):
             return 'project_based'
+        return None
+    
+    async def _parse_skill_level_with_ai(self, query: str) -> Optional[str]:
+        """Parse skill level using AI understanding."""
+        try:
+            intent = await self.ai_analyzer.parse_user_intent(query, context="skill_level")
+            logger.info(f"AI parsed skill level: {intent.skill_level}")
+            return intent.skill_level
+        except Exception as e:
+            logger.error(f"AI parsing failed, falling back: {e}")
+            return self._parse_skill_level_fallback(query)
+    
+    def _parse_skill_level_fallback(self, query: str) -> Optional[str]:
+        """Fallback keyword-based skill level parsing."""
+        lines = [line.strip() for line in query.strip().split('\n') if line.strip()]
+        user_input = lines[-1] if lines else query
+        query_lower = user_input.lower()
 
+        if any(word in query_lower for word in ['beginner', 'new', 'starting', 'learning']):
+            return 'beginner'
+        elif any(word in query_lower for word in ['intermediate', 'some experience', 'comfortable']):
+            return 'intermediate'
+        elif any(word in query_lower for word in ['advanced', 'experienced', 'expert']):
+            return 'advanced'
         return None
 
     async def _handle_ready_to_process(
@@ -670,11 +708,111 @@ You can say:
         user_inputs: UserInputs,
         research_data: Dict[str, Any]
     ) -> str:
-        """Create a comprehensive preparation plan based on user inputs and research."""
+        """Create a comprehensive preparation plan with AI-powered resource curation."""
+        try:
+            logger.info("Creating AI-powered preparation plan")
+            
+            # Use AI to rank and filter resources for each domain
+            ranked_resources = {}
+            user_profile = {
+                'skill_level': user_inputs.skill_level or 'intermediate',
+                'preference': user_inputs.preference or 'balanced',
+                'timeline': '8-12 weeks',
+                'companies': user_inputs.companies or []
+            }
+            
+            for domain in user_inputs.domains:
+                if domain in research_data.get('domains', {}):
+                    domain_data = research_data['domains'][domain]
+                    
+                    # Collect all search results for this domain
+                    all_results = []
+                    
+                    if domain_data.get('current_guides', {}).get('success'):
+                        all_results.extend(domain_data['current_guides']['results'])
+                    
+                    if domain_data.get('interview_info', {}).get('success'):
+                        all_results.extend(domain_data['interview_info']['results'])
+                    
+                    if domain_data.get('learning_resources', {}).get('success'):
+                        all_results.extend(domain_data['learning_resources']['results'])
+                    
+                    if domain_data.get('youtube_resources', {}).get('success'):
+                        all_results.extend(domain_data['youtube_resources']['results'])
+                    
+                    if domain == 'algorithms' and domain_data.get('leetcode_problems', {}).get('success'):
+                        all_results.extend(domain_data['leetcode_problems']['results'])
+                    
+                    # Use AI to rank and filter resources
+                    if all_results:
+                        logger.info(f"Ranking {len(all_results)} resources for {domain} using AI")
+                        ranked = await self.ai_analyzer.rank_and_filter_resources(
+                            search_results=all_results,
+                            user_profile=user_profile,
+                            domain=domain,
+                            max_results=5
+                        )
+                        ranked_resources[domain] = ranked
+                        logger.info(f"AI selected {len(ranked)} top resources for {domain}")
+            
+            # Use AI to synthesize the complete plan
+            logger.info("Synthesizing personalized plan with AI")
+            plan = await self.ai_analyzer.synthesize_personalized_plan(
+                user_profile={
+                    'domains': user_inputs.domains,
+                    'skill_level': user_inputs.skill_level or 'intermediate',
+                    'preference': user_inputs.preference or 'balanced',
+                    'timeline': '8-12',
+                    'companies': user_inputs.companies or 'General tech companies'
+                },
+                research_data=research_data,
+                ranked_resources=ranked_resources
+            )
+            
+            # Add the AI-curated resources with explanations
+            plan += "\n\n🔗 **AI-Curated Resources (Personalized for You)**\n\n"
+            
+            for domain, resources in ranked_resources.items():
+                domain_title = domain.replace('_', ' ').title()
+                plan += f"**{domain_title}:**\n"
+                
+                for resource in resources:
+                    # Add resource with AI explanation
+                    plan += f"\n- **[{resource.title[:60]}...]({resource.url})**\n"
+                    plan += f"  - *Relevance Score: {resource.relevance_score:.1f}/10*\n"
+                    plan += f"  - *Why recommended:* {resource.why_recommended}\n"
+                    plan += f"  - *Difficulty match:* {resource.difficulty_match}\n"
+                
+                plan += "\n"
+            
+            # Add note about AI curation
+            total_resources = sum(len(resources) for resources in ranked_resources.values())
+            plan += f"\n**✨ Note:** This plan includes {total_resources} AI-curated resources specifically selected for your skill level ({user_inputs.skill_level or 'intermediate'}) and learning style ({user_inputs.preference or 'balanced'}).\n"
+            
+            plan += """
+**Are you satisfied with this preparation plan, or would you like me to make any adjustments?**
+
+You can say:
+- **"I'm satisfied"** or **"This looks perfect!"** to complete
+- **"I want to adjust..."** to request specific changes
+
+What would you like to do next?"""
+            
+            return plan
+            
+        except Exception as e:
+            logger.error(f"Error creating AI-powered preparation plan: {e}")
+            # Fallback to basic plan
+            return await self._create_basic_plan_fallback(user_inputs, research_data)
+    
+    async def _create_basic_plan_fallback(
+        self,
+        user_inputs: UserInputs,
+        research_data: Dict[str, Any]
+    ) -> str:
+        """Fallback to basic plan generation if AI fails."""
         try:
             domains_str = ", ".join([d.replace('_', ' ').title() for d in user_inputs.domains])
-
-            # Determine preparation timeline based on skill level
             timeline_weeks = 8 if user_inputs.skill_level == 'advanced' else 12 if user_inputs.skill_level == 'intermediate' else 16
 
             plan = f"""🎉 **Your Interview Preparation Plan is Ready!**
@@ -682,18 +820,16 @@ You can say:
 🎯 **Your Interview Preparation Plan**
 📋 **Overview**
 - **Domains:** {domains_str}
-- **Skill Level:** {user_inputs.skill_level.replace('_', ' ').title()}
-- **Learning Style:** {user_inputs.preference.replace('_', ' ').title()}
+- **Skill Level:** {(user_inputs.skill_level or 'intermediate').replace('_', ' ').title()}
+- **Learning Style:** {(user_inputs.preference or 'balanced').replace('_', ' ').title()}
 
 📅 **{timeline_weeks}-Week Preparation Schedule**
 
 """
 
-            # Timeline breakdown
             foundation_weeks = timeline_weeks // 4
             skill_weeks = timeline_weeks // 4
             advanced_weeks = timeline_weeks // 4
-            final_weeks = timeline_weeks - (foundation_weeks + skill_weeks + advanced_weeks)
 
             plan += f"""**Weeks 1-{foundation_weeks}: Foundation Building**
 - Review fundamental concepts
@@ -719,10 +855,7 @@ You can say:
 
 """
 
-            # Add researched resources from web search
             resource_count = 0
-
-            # Add domain-specific resources from research
             for domain in user_inputs.domains:
                 domain_title = domain.replace('_', ' ').title()
                 plan += f"**{domain_title} Resources:**\n"
@@ -730,7 +863,6 @@ You can say:
                 if domain in research_data.get('domains', {}):
                     domain_data = research_data['domains'][domain]
 
-                    # Add current interview guides
                     if domain_data.get('current_guides', {}).get('success'):
                         current_guides = domain_data['current_guides']['results'][:2]
                         for guide in current_guides:
@@ -738,7 +870,6 @@ You can say:
                                 plan += f"- [📖 {guide['title'][:50]}...]({guide['url']})\n"
                                 resource_count += 1
 
-                    # Add interview preparation resources
                     if domain_data.get('interview_info', {}).get('success'):
                         interview_resources = domain_data['interview_info']['results'][:2]
                         for resource in interview_resources:
@@ -746,7 +877,6 @@ You can say:
                                 plan += f"- [📚 {resource['title'][:50]}...]({resource['url']})\n"
                                 resource_count += 1
 
-                    # Add YouTube resources
                     if domain_data.get('youtube_resources', {}).get('success'):
                         youtube_resources = domain_data['youtube_resources']['results'][:2]
                         for resource in youtube_resources:
@@ -754,7 +884,6 @@ You can say:
                                 plan += f"- [🎥 {resource['title'][:50]}...]({resource['url']})\n"
                                 resource_count += 1
 
-                    # Add LeetCode problems for algorithms domain
                     if domain == 'algorithms' and domain_data.get('leetcode_problems', {}).get('success'):
                         leetcode_problems = domain_data['leetcode_problems']['results'][:3]
                         for problem in leetcode_problems:
@@ -764,7 +893,6 @@ You can say:
 
                 plan += "\n"
 
-            # Add general practice platforms
             plan += """**Popular Practice Platforms:**
 - LeetCode - Algorithm practice
 - System Design Primer - Architecture concepts
@@ -773,20 +901,20 @@ You can say:
 
 """
 
-            # Add daily schedule recommendation
-            if user_inputs.preference == 'coding_heavy':
+            preference = user_inputs.preference or 'balanced'
+            if preference == 'coding_heavy':
                 plan += """💡 **Daily Schedule Recommendation**
 - 1.5 hours: Coding practice
 - 30 minutes: System design study
 - 30 minutes: Domain-specific learning
 """
-            elif user_inputs.preference == 'theory_heavy':
+            elif preference == 'theory_heavy':
                 plan += """💡 **Daily Schedule Recommendation**
 - 1 hour: Theory and concept study
 - 45 minutes: System design reading
 - 45 minutes: Coding practice
 """
-            elif user_inputs.preference == 'project_based':
+            elif preference == 'project_based':
                 plan += """💡 **Daily Schedule Recommendation**
 - 1 hour: Project development
 - 30 minutes: Code review and optimization
@@ -799,11 +927,10 @@ You can say:
 - 30 minutes: Domain-specific learning
 """
 
-            # Add note about web search
             if resource_count > 0:
-                plan += f"\n**Note:** This plan includes {resource_count} current resources found through web search.\n"
+                plan += f"\n**Note:** This basic plan includes {resource_count} resources. For AI-powered personalized recommendations, the system will analyze and rank resources based on your profile.\n"
             else:
-                plan += "\n**Note:** This is a basic plan. For a more detailed, research-backed plan, please ensure web search is enabled.\n"
+                plan += "\n**Note:** This is a basic fallback plan.\n"
 
             plan += """
 **Are you satisfied with this preparation plan, or would you like me to make any adjustments?**
@@ -817,7 +944,7 @@ What would you like to do next?"""
             return plan
 
         except Exception as e:
-            logger.error(f"Error creating preparation plan: {e}")
+            logger.error(f"Error creating basic fallback plan: {e}")
             return f"I encountered an error creating your plan: {str(e)}. Please try again."
 
     SUPPORTED_CONTENT_TYPES = ['text', 'text/plain']
