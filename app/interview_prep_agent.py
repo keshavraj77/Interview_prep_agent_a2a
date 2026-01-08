@@ -8,7 +8,8 @@ from typing import Annotated, Literal
 import operator
 
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
+from .llm_provider import get_llm_provider
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 from langgraph.graph import StateGraph, START, END
@@ -93,15 +94,8 @@ For processing status, indicate if web search is required and provide search que
 
     def __init__(self):
         """Initialize the Interview Preparation Agent."""
-        # Initialize Google Gemini model
-        model_source = os.getenv('MODEL_SOURCE', 'google')
-        if model_source == 'google':
-            self.model = ChatGoogleGenerativeAI(
-                model='gemini-3-flash-preview',
-                temperature=0.3
-            )
-        else:
-            raise ValueError("Only Google Gemini is supported in this implementation")
+        # Initialize LLM (Google Gemini or Local)
+        self.model = get_llm_provider(temperature=0.3)
 
         # Initialize web search manager
         self.search_manager = WebSearchManager()
@@ -133,7 +127,7 @@ For processing status, indicate if web search is required and provide search que
             prompt=f"{self.SYSTEM_INSTRUCTION}\n\n{self.FORMAT_INSTRUCTION}"
         )
 
-        logger.info("InterviewPrepAgent initialized with Google Gemini and web search tools")
+        logger.info(f"InterviewPrepAgent initialized with {os.getenv('MODEL_SOURCE', 'google')} LLM and web search tools")
 
     async def stream(self, query: str, context_id: str) -> AsyncIterableType[Dict[str, Any]]:
         """

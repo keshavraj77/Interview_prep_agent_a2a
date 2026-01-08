@@ -8,7 +8,7 @@ using LLM capabilities to create personalized recommendations.
 import os
 import logging
 from typing import Dict, Any, List, Optional
-from langchain_google_genai import ChatGoogleGenerativeAI
+from .llm_provider import get_llm_provider
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
@@ -41,12 +41,9 @@ class AIResourceAnalyzer:
     """
 
     def __init__(self):
-        """Initialize the AI Resource Analyzer with Gemini model."""
-        self.model = ChatGoogleGenerativeAI(
-            model='gemini-3-flash-preview',
-            temperature=0.2  # Lower temperature for more consistent analysis
-        )
-        logger.info("AIResourceAnalyzer initialized with Gemini 3 Flash Preview")
+        """Initialize the AI Resource Analyzer with configured LLM."""
+        self.model = get_llm_provider(temperature=0.2)
+        logger.info(f"AIResourceAnalyzer initialized with {os.getenv('MODEL_SOURCE', 'google')} LLM")
 
     async def parse_user_intent(
         self,

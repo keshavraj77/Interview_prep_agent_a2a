@@ -37,13 +37,35 @@ def main(host, port):
     """Starts the Interview Preparation Agent server."""
     try:
         # Validate Google API key
-        if not os.getenv('GOOGLE_API_KEY'):
+        # Validate API keys based on model source
+        model_source = os.getenv('MODEL_SOURCE', 'google')
+        if model_source == 'google' and not os.getenv('GOOGLE_API_KEY'):
             raise MissingAPIKeyError(
                 'GOOGLE_API_KEY environment variable not set.'
             )
+        elif model_source == 'local':
+            # Validate local LLM connection
+            base_url = os.getenv('LOCAL_LLM_BASE_URL', 'http://127.0.0.1:1234/v1')
+            try:
+                # Simple check to see if the server is up
+                # Note: Not all OpenAI-compatible servers implement the same endpoints,
+                # but /v1/models is standard
+                with httpx.Client() as client:
+                    response = client.get(f"{base_url.rstrip('/')}/models", timeout=5.0)
+                    if response.status_code != 200:
+                        logger.warning(f"Local LLM might not be ready at {base_url}. Status: {response.status_code}")
+                    else:
+                        logger.info(f"Local LLM connected at {base_url}")
+            except Exception as e:
+                logger.warning(f"Could not connect to local LLM at {base_url}: {e}")
+
 
         logger.info("Starting Interview Preparation Agent server")
-        logger.info(f"Google API Key configured: {'Yes' if os.getenv('GOOGLE_API_KEY') else 'No'}")
+        logger.info(f"Model source: {model_source}")
+        if model_source == 'local':
+            logger.info(f"Local LLM URL: {os.getenv('LOCAL_LLM_BASE_URL', 'http://127.0.0.1:1234/v1')}")
+        else:
+            logger.info(f"Google API Key configured: {'Yes' if os.getenv('GOOGLE_API_KEY') else 'No'}")
         logger.info(f"Web search enabled: {os.getenv('ENABLE_WEB_SEARCH', 'true')}")
         logger.info(f"Push notifications enabled: {os.getenv('ENABLE_PUSH_NOTIFICATIONS', 'true')}")
 
