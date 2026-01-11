@@ -133,7 +133,7 @@ def main(host, port):
 
         # Create request handler with interview prep executor
         request_handler = DefaultRequestHandler(
-            agent_executor=InterviewPrepAgentExecutor(httpx_client),
+            agent_executor=InterviewPrepAgentExecutor(httpx_client, task_store),
             task_store=task_store,
             push_config_store=push_config_store,
             push_sender=BasePushNotificationSender(httpx_client, push_config_store),
@@ -184,7 +184,7 @@ def create_test_client():
         task_store = InMemoryTaskStore()
 
         # Create agent executor
-        agent_executor = InterviewPrepAgentExecutor(httpx_client)
+        agent_executor = InterviewPrepAgentExecutor(httpx_client, task_store)
 
         return {
             'agent_executor': agent_executor,

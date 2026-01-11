@@ -33,15 +33,16 @@ class InterviewPrepAgentExecutor(AgentExecutor):
     Enhanced AgentExecutor for multi-turn Interview Preparation Agent with A2A Protocol.
     """
 
-    def __init__(self, httpx_client: httpx.AsyncClient):
+    def __init__(self, httpx_client: httpx.AsyncClient, task_store):
         self.agent = InterviewPrepAgent()
         self.search_manager = WebSearchManager()
         self.httpx_client = httpx_client
+        self.task_store = task_store
 
         # Import push notification handler
         try:
             from .push_notification_handler import InterviewPrepPushNotificationHandler
-            self.push_notification_handler = InterviewPrepPushNotificationHandler(httpx_client)
+            self.push_notification_handler = InterviewPrepPushNotificationHandler(httpx_client, task_store)
         except ImportError as e:
             logger.warning(f"Push notification handler not available: {e}")
             self.push_notification_handler = None

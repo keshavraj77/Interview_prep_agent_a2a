@@ -50,8 +50,9 @@ class InterviewPrepPushNotificationSettings:
 class InterviewPrepPushNotificationHandler:
     """Enhanced push notification handler for interview preparation agent."""
 
-    def __init__(self, httpx_client: httpx.AsyncClient):
+    def __init__(self, httpx_client: httpx.AsyncClient, task_store):
         self.client = httpx_client
+        self.task_store = task_store
         self.settings = InterviewPrepPushNotificationSettings()
 
     async def handle_push_notification_request(
@@ -181,10 +182,14 @@ class InterviewPrepPushNotificationHandler:
             logger.info("Starting async interview preparation processing")
 
             # Track progress through the agent's response generator
+            response_count = 0
             async for response in agent_response_generator(query, context_id, request_metadata):
+                response_count += 1
                 progress_content = response.get('content', '')
                 is_complete = response.get('is_task_complete', False)
                 require_input = response.get('require_user_input', False)
+
+                logger.info(f"Processing response #{response_count}: is_complete={is_complete}, require_input={require_input}, content_length={len(progress_content)}")
 
                 # Store progress step
                 progress_steps.append({
@@ -196,6 +201,7 @@ class InterviewPrepPushNotificationHandler:
 
                 # Send progress update for non-final responses
                 if not is_complete and not require_input and progress_content:
+                    logger.info(f"Sending progress update for response #{response_count}")
                     await self._send_progress_update(
                         task=task,
                         callback_url=callback_url,
@@ -211,16 +217,22 @@ class InterviewPrepPushNotificationHandler:
 
                 # If this is the final response, prepare for completion
                 if is_complete or require_input:
+                    logger.info(f"Final response detected at response #{response_count}")
                     final_response = response
                     break
 
+            logger.info(f"Finished processing async generator, processed {response_count} responses")
+
             # If no final response was captured, create a default one
             if 'final_response' not in locals():
+                logger.warning("No final response captured from generator, creating default")
                 final_response = {
                     'is_task_complete': True,
                     'require_user_input': False,
                     'content': 'Interview preparation plan completed successfully!'
                 }
+            else:
+                logger.info(f"Final response captured: is_complete={final_response.get('is_task_complete')}, require_input={final_response.get('require_user_input')}")
 
             # Prepare final callback payload
             callback_payload = self._create_final_callback_payload(
@@ -232,12 +244,60 @@ class InterviewPrepPushNotificationHandler:
             )
 
             # Send final callback
+            logger.info(f"About to send final callback for task {task.id}")
             await self._send_callback(
                 callback_url=callback_url,
                 payload=callback_payload,
                 auth_config=auth_config,
                 webhook_token=webhook_token
             )
+            logger.info(f"Final callback sent for task {task.id}")
+
+            # Update task status in A2A framework using task store directly
+            logger.info(f"Starting task store update for task {task.id}")
+            from a2a.utils import new_agent_text_message
+
+            final_message = new_agent_text_message(
+                final_response['content'],
+                context_id,
+                task.id
+            )
+            logger.info(f"Created final message for task {task.id}")
+
+            # Get the latest task from the store
+            logger.info(f"Fetching task {task.id} from store")
+            updated_task = await self.task_store.get(task.id)
+            if not updated_task:
+                logger.error(f"Task {task.id} not found in store")
+                updated_task = task
+            else:
+                logger.info(f"Successfully fetched task {task.id} from store, current state: {updated_task.status.state}")
+
+            # Add the final message to history
+            if updated_task.history:
+                updated_task.history.append(final_message)
+            else:
+                updated_task.history = [final_message]
+            logger.info(f"Added final message to task {task.id} history")
+
+            # Determine final state based on response
+            if final_response['is_task_complete']:
+                updated_task.status.state = TaskState.completed
+                updated_task.status.message = None
+                logger.info(f"Setting task {task.id} to COMPLETED state")
+            elif final_response['require_user_input']:
+                updated_task.status.state = TaskState.input_required
+                updated_task.status.message = final_message
+                logger.info(f"Setting task {task.id} to INPUT_REQUIRED state")
+            else:
+                updated_task.status.state = TaskState.working
+                updated_task.status.message = final_message
+                logger.info(f"Setting task {task.id} to WORKING state")
+
+            # Save the updated task to the store
+            logger.info(f"Saving task {task.id} to store with state: {updated_task.status.state}")
+            await self.task_store.save(updated_task)
+            logger.info(f"Task {task.id} successfully saved to store")
 
             logger.info("Interview preparation async processing completed successfully")
 
@@ -259,6 +319,35 @@ class InterviewPrepPushNotificationHandler:
                     auth_config=auth_config,
                     webhook_token=webhook_token
                 )
+
+                # Update task status to input_required (error state) in A2A framework using task store
+                from a2a.utils import new_agent_text_message
+
+                error_message = new_agent_text_message(
+                    f"I encountered an error while creating your interview preparation plan: {str(e)}. Please try again or contact support if the issue persists.",
+                    context_id,
+                    task.id
+                )
+
+                # Get the latest task from the store
+                error_task = await self.task_store.get(task.id)
+                if not error_task:
+                    logger.error(f"Task {task.id} not found in store during error handling")
+                    error_task = task
+
+                # Add error message to history
+                if error_task.history:
+                    error_task.history.append(error_message)
+                else:
+                    error_task.history = [error_message]
+
+                # Set error state
+                error_task.status.state = TaskState.input_required
+                error_task.status.message = error_message
+
+                # Save the updated task to the store
+                await self.task_store.save(error_task)
+
             except Exception as callback_error:
                 logger.error(f"Failed to send error callback: {callback_error}")
 
@@ -308,13 +397,35 @@ class InterviewPrepPushNotificationHandler:
                 "id": str(uuid.uuid4())
             }
 
-            # Send progress update
+            # Send progress update via webhook
             await self._send_callback(
                 callback_url=callback_url,
                 payload=jsonrpc_payload,
                 auth_config=auth_config,
                 webhook_token=webhook_token
             )
+
+            # Also update the task in the task store
+            logger.info(f"Updating task store with progress: {progress_content[:50]}...")
+
+            # Get the latest task from store
+            stored_task = await self.task_store.get(task.id)
+            if stored_task:
+                # Add progress message to history
+                if stored_task.history:
+                    stored_task.history.append(progress_message)
+                else:
+                    stored_task.history = [progress_message]
+
+                # Update status to working with progress message
+                stored_task.status.state = TaskState.working
+                stored_task.status.message = progress_message
+
+                # Save back to store
+                await self.task_store.save(stored_task)
+                logger.info(f"Progress update saved to task store for task {task.id}")
+            else:
+                logger.warning(f"Task {task.id} not found in store during progress update")
 
             logger.info(f"Sent progress update: {progress_content[:50]}...")
 
